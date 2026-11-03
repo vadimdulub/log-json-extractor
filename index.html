@@ -1,0 +1,1134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log JSON extractor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;600&family=Atkinson+Hyperlegible+Next:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #E7ECF1;
+  --panel: #FBFCFD;
+  --ink: #17202B;
+  --muted: #5B6676;
+  --rule: #C9D2DC;
+  --soft: #EEF2F6;
+  --key: #2445C2;
+  --str: #17704F;
+  --num: #A0306F;
+  --lit: #8B5B00;
+  --ok: #2D4FD6;
+  --fix: #D48A12;
+  --cut: #C2412D;
+  --on-ok: #FFFFFF;
+  --on-fix: #231600;
+  --on-cut: #FFFFFF;
+  --sans: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Atkinson Hyperlegible Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131920;
+    --panel: #19212A;
+    --ink: #DCE3EB;
+    --muted: #8F9BAA;
+    --rule: #2D3845;
+    --soft: #212B36;
+    --key: #93A9FF;
+    --str: #74CFA6;
+    --num: #EE93C6;
+    --lit: #E6B865;
+    --ok: #5D7BF5;
+    --fix: #E3A239;
+    --cut: #E0634D;
+    --on-ok: #0A1240;
+    --on-fix: #231600;
+    --on-cut: #1A0500;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 var(--sans);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+
+/* top bar */
+.bar {
+  display: flex; align-items: center; gap: 1.5rem;
+  padding: .7rem 1.25rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+}
+.bar h1 { margin: 0; font-size: 1.0625rem; font-weight: 700; white-space: nowrap; }
+.stats { display: flex; gap: 1.1rem; flex: 1; min-width: 0; color: var(--muted); font-size: .875rem; white-space: nowrap; overflow: hidden; }
+.stats b { color: var(--ink); font-weight: 600; }
+.actions { display: flex; gap: .5rem; align-items: center; }
+.btn {
+  background: transparent; border: 1px solid var(--rule); border-radius: 5px;
+  padding: .28rem .7rem; font-size: .875rem; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--soft); }
+.btn:disabled { opacity: .45; cursor: default; background: transparent; }
+.btn.small { padding: .15rem .55rem; font-size: .8125rem; }
+.toggle { display: flex; gap: .4rem; align-items: center; font-size: .875rem; color: var(--muted); cursor: pointer; white-space: nowrap; margin-right: .5rem; }
+.toggle input { accent-color: var(--ok); margin: 0; }
+
+/* input map strip: the one loud element */
+.map-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 1rem;
+  padding: .65rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+.map-caption { font-size: .8125rem; color: var(--muted); white-space: nowrap; }
+.strip {
+  position: relative; height: 30px; border-radius: 4px;
+  background:
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--muted) 30%, transparent) 0 3px, transparent 3px 6px) center / 100% 4px no-repeat,
+    var(--soft);
+}
+.band {
+  position: absolute; top: 0; bottom: 0; min-width: 1.5rem;
+  border: 0; border-radius: 3px; padding: 0 .35rem;
+  font: 600 .75rem/30px var(--mono); text-align: left;
+  cursor: pointer; overflow: hidden;
+}
+.band.valid { background: var(--ok); color: var(--on-ok); }
+.band.repaired { background: var(--fix); color: var(--on-fix); }
+.band.truncated {
+  background: repeating-linear-gradient(135deg, var(--cut) 0 6px, color-mix(in srgb, var(--cut) 72%, #000) 6px 9px);
+  color: var(--on-cut);
+}
+.band:hover, .band.hot { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ink); z-index: 1; }
+.legend { display: flex; gap: .9rem; font-size: .8125rem; color: var(--muted); white-space: nowrap; }
+.legend i { display: inline-block; width: .7rem; height: .7rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
+.legend .l-ok { background: var(--ok); }
+.legend .l-fix { background: var(--fix); }
+.legend .l-cut { background: var(--cut); }
+
+/* panes */
+main { display: grid; grid-template-columns: minmax(320px, 38%) minmax(0, 1fr); min-height: 0; }
+.input-pane { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--rule); }
+.pane-head {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  padding: .5rem 1rem .5rem 1.25rem; border-bottom: 1px solid var(--rule);
+  font-size: .875rem; color: var(--muted);
+}
+.pane-head span { display: flex; gap: .4rem; }
+textarea {
+  flex: 1; min-height: 0; resize: none; border: 0; margin: 0;
+  padding: 1rem 1.25rem; background: transparent; color: var(--ink);
+  font: 13px/1.6 var(--mono); outline-offset: -3px;
+}
+textarea::placeholder { color: var(--muted); }
+textarea.dropping { background: var(--soft); }
+.output { overflow: auto; min-height: 0; padding: 1rem 1.5rem 5rem; }
+.flow { max-width: 120ch; }
+
+/* text that sits between structures */
+.text-wrap { margin: .35rem 0; }
+.seg-text {
+  margin: 0; font: 13px/1.6 var(--mono); color: var(--muted);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.text-wrap.clamped .seg-text { max-height: 8em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+.more { border: 0; background: none; padding: .1rem 0; font-size: .8125rem; color: var(--ok); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+/* a lifted structure */
+.struct {
+  margin: .6rem 0 .9rem;
+  background: var(--panel);
+  border: 1px solid var(--rule); border-left: 4px solid var(--ok); border-radius: 6px;
+}
+.struct[data-status="repaired"] { border-left-color: var(--fix); }
+.struct[data-status="truncated"] { border-left-color: var(--cut); }
+.struct.flash { animation: flash 1.3s ease-out; }
+@keyframes flash { from { box-shadow: 0 0 0 3px var(--ok); } to { box-shadow: 0 0 0 3px transparent; } }
+.struct-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .55rem;
+  padding: .5rem .75rem .5rem .8rem; border-bottom: 1px solid var(--rule);
+}
+.idx {
+  display: inline-grid; place-items: center; min-width: 1.45rem; height: 1.45rem; padding: 0 .25rem;
+  border-radius: 3px; font: 600 .75rem/1 var(--mono);
+  background: var(--ok); color: var(--on-ok);
+}
+.struct[data-status="repaired"] .idx { background: var(--fix); color: var(--on-fix); }
+.struct[data-status="truncated"] .idx { background: var(--cut); color: var(--on-cut); }
+.struct h2 { margin: 0; font-size: .9375rem; font-weight: 600; }
+.badge { font-size: .75rem; line-height: 1.5; padding: 0 .45rem; border-radius: 999px; border: 1px solid currentColor; }
+.badge.fix { color: var(--fix); }
+.badge.cut { color: var(--cut); }
+.grow { flex: 1; }
+.seg-ctl { display: inline-flex; border: 1px solid var(--rule); border-radius: 5px; overflow: hidden; }
+.seg-ctl button { border: 0; background: transparent; padding: .15rem .6rem; font-size: .8125rem; cursor: pointer; }
+.seg-ctl button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.notes { margin: 0; padding: .35rem .8rem; border-bottom: 1px solid var(--rule); font-size: .8125rem; color: var(--muted); }
+.struct-body { padding: .55rem .8rem .75rem; font: 13px/1.65 var(--mono); overflow-x: auto; }
+
+/* tree */
+.tree summary { display: block; list-style: none; cursor: pointer; position: relative; padding-left: 1.1rem; border-radius: 3px; }
+.tree summary::-webkit-details-marker { display: none; }
+.tree summary::before {
+  content: ""; position: absolute; left: .3rem; top: calc(.825em - .3em);
+  border-top: .3em solid transparent; border-bottom: .3em solid transparent; border-left: .42em solid var(--muted);
+  transform-origin: 35% 50%; transition: transform .12s;
+}
+.tree details[open] > summary::before { transform: rotate(90deg); }
+.row { position: relative; padding-left: 1.1rem; border-radius: 3px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tree summary:hover, .row:hover { background: var(--soft); }
+.children { margin-left: .5rem; padding-left: .6rem; border-left: 1px solid var(--rule); }
+.k { color: var(--key); }
+.k.index, .k.pos { color: var(--muted); }
+.colon, .brace { color: var(--muted); }
+.v.str { color: var(--str); }
+.v.str.empty { color: var(--muted); }
+.v.num { color: var(--num); }
+.v.bool, .v.null { color: var(--lit); }
+.count { color: var(--muted); margin-left: .35rem; font-family: var(--sans); font-size: .8125rem; }
+.preview { display: none; color: var(--muted); margin-left: .5rem; }
+.tree details:not([open]) > summary .preview { display: inline; }
+.tag {
+  margin-left: .45rem; padding: 0 .35rem; border: 1px solid var(--rule); border-radius: 3px;
+  font: .75rem/1.5 var(--sans); color: var(--muted); white-space: nowrap;
+}
+.etext { padding-left: 1.1rem; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.copy-node {
+  visibility: hidden; margin-left: .6rem; padding: 0 .4rem;
+  border: 1px solid var(--rule); border-radius: 3px; background: var(--panel);
+  font: .75rem/1.5 var(--sans); color: var(--muted); cursor: pointer;
+}
+.row:hover > .copy-node, .tree summary:hover > .copy-node, .copy-node:focus-visible { visibility: visible; }
+
+/* JSON view */
+.json { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.json .k { color: var(--key); }
+.json .s { color: var(--str); }
+.json .n { color: var(--num); }
+.json .l { color: var(--lit); }
+
+/* empty states */
+.empty { max-width: 52ch; margin: 3rem auto 0; color: var(--muted); }
+.empty-title { color: var(--ink); font-size: 1.0625rem; font-weight: 600; margin: 0 0 .4rem; }
+.empty p { margin: 0 0 1rem; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 1.25rem; transform: translate(-50%, .75rem); opacity: 0;
+  padding: .45rem .9rem; border-radius: 5px; background: var(--ink); color: var(--panel);
+  font-size: .875rem; pointer-events: none; transition: opacity .15s, transform .15s;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 880px) {
+  body { height: auto; overflow: auto; }
+  .bar { flex-wrap: wrap; gap: .6rem 1rem; }
+  .stats { order: 3; flex-basis: 100%; flex-wrap: wrap; gap: .1rem 1.1rem; }
+  .actions { flex-wrap: wrap; }
+  .map-row { grid-template-columns: minmax(0, 1fr); gap: .4rem; }
+  .map-caption, .legend { display: none; }
+  main { grid-template-columns: minmax(0, 1fr); }
+  .input-pane { border-right: 0; border-bottom: 1px solid var(--rule); }
+  textarea { min-height: 38vh; }
+  .output { overflow: visible; padding: 1rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <h1>Log JSON extractor</h1>
+  <div class="stats" id="stats" aria-live="polite"></div>
+  <div class="actions">
+    <label class="toggle"><input type="checkbox" id="unwrap" checked> Unwrap JSON inside strings</label>
+    <button class="btn" id="expandAll">Expand all</button>
+    <button class="btn" id="collapseAll">Collapse all</button>
+    <button class="btn" id="copyAll">Copy all as JSON</button>
+  </div>
+</header>
+
+<div class="map-row">
+  <span class="map-caption">Where JSON was found</span>
+  <div class="strip" id="strip" role="group" aria-label="Map of the input showing where each structure was found"></div>
+  <div class="legend" aria-hidden="true">
+    <span><i class="l-ok"></i>Valid JSON</span>
+    <span><i class="l-fix"></i>Repaired</span>
+    <span><i class="l-cut"></i>Truncated</span>
+  </div>
+</div>
+
+<main>
+  <section class="input-pane">
+    <div class="pane-head">
+      <label for="src">Input</label>
+      <span>
+        <button class="btn small" id="example">Load example</button>
+        <button class="btn small" id="clear">Clear</button>
+      </span>
+    </div>
+    <textarea id="src" spellcheck="false" autocomplete="off"
+      placeholder="Paste a log line, error message or any text that contains JSON. You can also drop a file here."></textarea>
+  </section>
+  <section class="output" id="out"></section>
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script type="text/plain" id="example-text">
+sync failed: SyncInvoices: upstream API rate limit is reached (code=api.rate_limit_exceeded) (details=[{"@type":"retry","suspend":true,"suspend_duration":3600000000000}]): syncCustomerInvoices(): ForEachPage(api.Invoice): process page with uri: https://api.example.com/v2/invoices?%24select=id: process value {ID:9f2c4e1a-5b3d-4c7e-8a61-2d9e0f3b7c45 Number: Description: CreatedAt:0001-01-01 00:00:00 +0000 UTC UpdatedAt:0001-01-01 00:00:00 +0000 UTC Tags:[] Currency:}: saveLines(): saveLineItem(): ForEach(api.LineItem): ForEachPage(api.LineItem): api error (code=client.api_error): {StatusCode:429 Err:{Code:TooManyRequests Message:{"ErrorCode":"Throttled","Message":"{\r\n  \"_version\": 3,\r\n  \"Message\": \"Request was throttled - Activity ID: 4b8e2f10-7c3a-4d59-9e21-6a0f5c8d3b72 - Url: https://api.example.com/v2/invoices('9f2c4e1a-5b3d-4c7e-8a61-2d9e0f3b7c45')/lines?api-version=2026-01-01\",\r\n  \"CustomErrorPhrase\": \"\",\r\n  \"RetryAfter\": \"00:00:02\",\r\n  \"ErrorSource\": \"\",\r\n  \"HttpHeaders\": \"{}\"\r\n}","Target":null,"Details":null,"InnerError":null,"Annotations":[]} Details:[] InnerError:{Message: Code: RequestID:4b8e2f10-7c3a-4d59-9e21-6a0f5c8d3b72 Date:2026-11-03T09:51:22}}}
+example.com/billing/client.TranslateErr.func1 (client/errors.go:59), example.com/billing/client.TranslateErr (client/errors.go:100), example.com/billing/client.forEachPage[...] (client/pager.go:123), example.com/billing/client.ForEachPage[...] (client/pager.go:86), example.com/billing/client.ForEach[...] (client/pager.go:45), example.com/billing/sync.(*Worker).saveLineItem (sync/lines.go:58), example.com/billing/sync.(*Worker).Ru
+</script>
+
+<script id="core">
+// Tolerant extractor: finds JSON-like structures in arbitrary text and parses them even when broken.
+// Handles strict JSON, JS/Python literals, Go %+v structs and map[...] dumps, backslash-escaped JSON,
+// truncated input, and JSON nested inside string values. No DOM access; tested by test.mjs.
+(function (root) {
+  'use strict';
+
+  const isWS = c => c === 32 || c === 10 || c === 13 || c === 9 || c === 12 || c === 11 || c === 160 || c === 0xFEFF;
+
+  // Bare keys: Go fields, JS identifiers, @type, $ref... "https://" is a value, not a key.
+  const KEY_COLON = /[A-Za-z_$@][\w$@.\-]*(?::(?!\/\/|:)|=>)/y;
+  const KEY_EQ = /[A-Za-z_$@][\w$@.\-]*(?:=(?![=>])|=>)/y;
+  const KEY_QUOTED = /(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')[ \t]*(?::|=>)/y;
+  const ESC_QUOTE = /\\+"/y;
+  const JSON_NUM = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+  const LOOSE_NUM = /^[+-]?(?:(?:0|[1-9]\d*)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+  const ESC1 = { '"': '"', '\\': '\\', '/': '/', n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', "'": "'" };
+  const MAX_NESTING = 400;
+  const MAX_STRING_DEPTH = 8;
+  const BAIL = new Error('not a structure');
+
+  // Removes one level of backslash escaping; map[k] is the source index of out[k].
+  function unescapeOnce(s, from, to) {
+    const out = [], map = [];
+    for (let i = from; i < to; i++) {
+      let c = s[i], adv = 1;
+      if (c === '\\' && i + 1 < to) {
+        const d = s[i + 1];
+        if (ESC1[d] !== undefined) { c = ESC1[d]; adv = 2; }
+        else if (d === 'u' && i + 5 < to && /^[0-9a-fA-F]{4}$/.test(s.substr(i + 2, 4))) {
+          c = String.fromCharCode(parseInt(s.substr(i + 2, 4), 16)); adv = 6;
+        }
+      }
+      out.push(c); map.push(i);
+      i += adv - 1;
+    }
+    map.push(to);
+    return { out: out.join(''), map };
+  }
+
+  class Parser {
+    constructor(s) { this.s = s; this.n = s.length; this.i = 0; this.f = new Set(); this.closers = []; }
+
+    // whitespace, comments, and literal \n \r \t left over from escaped logs
+    ws() {
+      const s = this.s, n = this.n;
+      while (this.i < n) {
+        const c = s.charCodeAt(this.i);
+        if (isWS(c)) { this.i++; continue; }
+        if (c === 92) {
+          const d = s[this.i + 1];
+          if (d === 'n' || d === 'r' || d === 't') { this.i += 2; continue; }
+          break;
+        }
+        if (c === 47) {
+          const d = s[this.i + 1];
+          if (d === '/') { const e = s.indexOf('\n', this.i); this.i = e < 0 ? n : e + 1; this.f.add('comments'); continue; }
+          if (d === '*') { const e = s.indexOf('*/', this.i + 2); this.i = e < 0 ? n : e + 2; this.f.add('comments'); continue; }
+        }
+        break;
+      }
+    }
+
+    // Is there a key at j? Strict mode follows Go %+v, where "Key:" is followed by a space only
+    // when the field is empty, so "failed backup: BackupFn: x" stays one value.
+    keyAt(j, eq, loose, depth = 0) {
+      const s = this.s;
+      KEY_QUOTED.lastIndex = j;
+      if (KEY_QUOTED.test(s)) return true;
+      const re = eq ? KEY_EQ : KEY_COLON;
+      re.lastIndex = j;
+      if (!re.test(s)) return false;
+      if (loose) return true;
+      let k = re.lastIndex;
+      if (k >= this.n || !isWS(s.charCodeAt(k))) return true;
+      while (k < this.n && (s[k] === ' ' || s[k] === '\t')) k++;
+      if (k >= this.n || s[k] === '}' || s[k] === ']') return true;
+      return depth < 16 && this.keyAt(k, eq, false, depth + 1);
+    }
+
+    // Does a bare value end at the separator run starting at i?
+    rawStops(i, eq) {
+      const s = this.s, n = this.n;
+      let j = i, loose = false;
+      while (j < n) {
+        const c = s[j];
+        if (c === ',' || c === '\n' || c === '\r') { loose = true; j++; }
+        else if (isWS(s.charCodeAt(j))) j++;
+        else break;
+      }
+      if (j >= n || s[j] === '}' || s[j] === ']') return true;
+      return this.keyAt(j, eq, loose);
+    }
+
+    escapedAhead(i) {
+      const s = this.s;
+      let j = i + 1;
+      while (j < this.n) {
+        const c = s.charCodeAt(j);
+        if (isWS(c)) j++;
+        else if (c === 92 && (s[j + 1] === 'n' || s[j + 1] === 'r' || s[j + 1] === 't')) j += 2;
+        else break;
+      }
+      if (s[j] !== '\\') return false;
+      ESC_QUOTE.lastIndex = j;
+      return ESC_QUOTE.test(s);
+    }
+
+    // {\"a\":1} -> unescape a growing window, parse it, map the end back to the source
+    escaped() {
+      const start = this.i;
+      for (let w = 1 << 16; ; w *= 4) {
+        const stop = Math.min(this.n, start + w);
+        const { out, map } = unescapeOnce(this.s, start, stop);
+        const sub = new Parser(out);
+        const node = sub.value(null, false, false);
+        if (stop < this.n && sub.f.has('truncated')) continue;
+        for (const x of sub.f) this.f.add(x);
+        this.f.add('escaped');
+        this.i = map[sub.i];
+        return node;
+      }
+    }
+
+    value(closer, inArray, eq) {
+      if (this.closers.length > MAX_NESTING) throw new Error('nesting too deep');
+      const s = this.s, c = s[this.i];
+      if (c === '{' || c === '[') {
+        if (this.escapedAhead(this.i)) return this.escaped();
+        return c === '{' ? this.obj('}', 'obj') : this.arr();
+      }
+      if (c === '"' || c === "'") {
+        if (c === "'") this.f.add('single-quotes');
+        return { t: 'str', v: this.str(c), q: c };
+      }
+      if (c === 'm' && s.startsWith('map[', this.i)) { this.i += 3; return this.obj(']', 'map'); }
+      if (c === '&' && s[this.i + 1] === '{') { this.i++; return this.obj('}', 'obj'); }
+      return this.scalar(this.raw(inArray, eq));
+    }
+
+    str(q) {
+      const s = this.s, n = this.n;
+      let i = this.i + 1, from = i, out = '';
+      for (;;) {
+        if (i >= n) { out += s.slice(from, i); this.f.add('truncated'); break; }
+        const c = s[i];
+        if (c === q) { out += s.slice(from, i); i++; break; }
+        if (c !== '\\') { i++; continue; }
+        out += s.slice(from, i);
+        const d = s[i + 1];
+        let adv = 2;
+        if (d === undefined) adv = 1;
+        else if (ESC1[d] !== undefined) out += ESC1[d];
+        else if (d === 'u' && /^[0-9a-fA-F]{4}$/.test(s.substr(i + 2, 4))) { out += String.fromCharCode(parseInt(s.substr(i + 2, 4), 16)); adv = 6; }
+        else if (d === 'x' && /^[0-9a-fA-F]{2}$/.test(s.substr(i + 2, 2))) { out += String.fromCharCode(parseInt(s.substr(i + 2, 2), 16)); adv = 4; }
+        else if (d === 'v') out += '\v';
+        else if (d === '`') out += '`';
+        else out += '\\' + d;
+        i += adv; from = i;
+      }
+      this.i = i;
+      return out;
+    }
+
+    raw(inArray, eq) {
+      const start = this.i;
+      let end = this.scanRaw(start, inArray, eq, true);
+      if (end < 0) end = this.scanRaw(start, inArray, eq, false);
+      this.i = end;
+      return this.s.slice(start, end).trim();
+    }
+
+    // Bare value: stops at the container end or at a separator followed by the next key.
+    // Brackets inside the value are balanced so "Err:fmt.Errorf(a, b) Code:1" stays intact.
+    scanRaw(start, inArray, eq, nest) {
+      const s = this.s, n = this.n, stack = [];
+      for (let i = start; i < n; i++) {
+        const c = s[i];
+        if (stack.length) {
+          if (c === '{') stack.push('}'); else if (c === '[') stack.push(']'); else if (c === '(') stack.push(')');
+          else if (c === stack[stack.length - 1]) stack.pop();
+          continue;
+        }
+        if (c === '}' || c === ']') return i;
+        if (c === ',' || isWS(s.charCodeAt(i))) {
+          if (inArray || this.rawStops(i, eq)) return i;
+          continue;
+        }
+        if (nest) { if (c === '{') stack.push('}'); else if (c === '[') stack.push(']'); else if (c === '(') stack.push(')'); }
+      }
+      return stack.length ? -1 : n;
+    }
+
+    scalar(t) {
+      if (t === '') return { t: 'str', v: '', q: '' };
+      if (JSON_NUM.test(t)) return { t: 'num', raw: t, json: t };
+      if (LOOSE_NUM.test(t)) { this.f.add('loose-num'); return { t: 'num', raw: t, json: String(Number(t)) }; }
+      switch (t) {
+        case 'true': case 'false': return { t: 'bool', v: t === 'true', raw: t };
+        case 'null': return { t: 'null', raw: t };
+        case 'True': case 'False': this.f.add('python'); return { t: 'bool', v: t === 'True', raw: t };
+        case 'TRUE': case 'FALSE': return { t: 'bool', v: t === 'TRUE', raw: t };
+        case 'None': this.f.add('python'); return { t: 'null', raw: t };
+        case 'nil': case '<nil>': this.f.add('go-nil'); return { t: 'null', raw: t };
+        case 'undefined': case 'NULL': case 'Null': return { t: 'null', raw: t };
+        case 'NaN': case 'Infinity': case '-Infinity': case '+Infinity':
+          this.f.add('loose-num'); return { t: 'num', raw: t, json: JSON.stringify(t) };
+      }
+      this.f.add('bare-values');
+      return { t: 'str', v: t, q: '' };
+    }
+
+    bareKey() {
+      const s = this.s, n = this.n, start = this.i;
+      let i = start;
+      while (i < n) {
+        const c = s[i];
+        if (c === ':' || c === '=' || c === ',' || c === '{' || c === '}' || c === '[' || c === ']' || c === '"' || c === "'" || isWS(s.charCodeAt(i))) break;
+        i++;
+      }
+      this.i = i;
+      return s.slice(start, i);
+    }
+
+    // Closing bracket that is not ours. If no ancestor expects it, skip it. Otherwise close here,
+    // consuming it when a comma follows: "[1, 2}, ..." reads as a typo for our own closer.
+    foreignCloser(c) {
+      if (!this.closers.slice(0, -1).includes(c)) { this.i++; this.f.add('stray'); return false; }
+      this.f.add('mismatched');
+      let j = this.i + 1;
+      while (j < this.n && isWS(this.s.charCodeAt(j))) j++;
+      if (this.s[j] === ',') this.i++;
+      return true;
+    }
+
+    // A candidate that opens with a keyless value ("{ at line 5", "[INFO]") is prose; give up
+    // before scanning the rest of the text, or many such braces make extraction quadratic.
+    bailIfProse(first) {
+      if (this.candidate && this.closers.length === 1 && (!first || (first.t === 'str' && !first.q))) throw BAIL;
+    }
+
+    obj(closer, kind) {
+      const s = this.s, n = this.n;
+      const node = { t: 'obj', kind, entries: [] };
+      this.i++;
+      this.closers.push(closer);
+      let eq = false, styled = false, commas = 0, bare = 0, pendingComma = false;
+      for (;;) {
+        this.ws();
+        if (this.i >= n) { this.f.add('truncated'); break; }
+        const c = s[this.i];
+        if (c === ',') { this.i++; commas++; pendingComma = true; continue; }
+        if (c === closer) { this.i++; if (pendingComma && node.entries.length) this.f.add('trailing-comma'); break; }
+        if (c === '}' || c === ']') { if (this.foreignCloser(c)) break; continue; }
+
+        const at = this.i;
+        let key = null, quoted = false, sep = null;
+        if (c === '"' || c === "'") { key = this.str(c); quoted = true; }
+        else if (c !== '{' && c !== '[') key = this.bareKey();
+        if (key !== null) {
+          const save = this.i;
+          while (this.i < n && (s[this.i] === ' ' || s[this.i] === '\t')) this.i++;
+          const d = s[this.i];
+          if (d === ':' && (quoted || !s.startsWith('//', this.i + 1))) sep = ':';
+          else if (d === '=' && s[this.i + 1] === '>') sep = '=>';
+          else if (d === '=' && s[this.i + 1] !== '=') sep = '=';
+          if (sep) this.i += sep.length; else this.i = save;
+        }
+
+        if (!sep) { // a value without a key, e.g. Go %v output
+          if (!node.entries.length) this.bailIfProse(null);
+          this.i = at;
+          this.f.add('positional');
+          node.entries.push({ k: null, v: this.value(closer, false, eq) });
+          if (this.i === at) this.i++;
+        } else {
+          if (!styled) { eq = sep === '='; styled = true; if (eq) this.f.add('eq-sep'); }
+          if (quoted && c === "'") this.f.add('single-quotes');
+          if (!quoted) { bare++; this.f.add('bare-keys'); }
+          if (node.entries.length && !pendingComma && quoted) this.f.add('missing-comma');
+          const before = this.i;
+          this.ws();
+          const d = s[this.i];
+          let v;
+          if (this.i >= n || d === closer || d === ',' || d === '}' || d === ']' ||
+              (this.i > before && this.keyAt(this.i, eq, /[\n,]/.test(s.slice(before, this.i))))) {
+            v = { t: 'str', v: '', q: '' };
+            this.f.add('empty-values');
+          } else {
+            v = this.value(closer, false, eq);
+          }
+          node.entries.push({ k: key, v });
+        }
+        pendingComma = false;
+      }
+      this.closers.pop();
+      if (bare && !commas && !eq) this.f.add('go-struct');
+      return node;
+    }
+
+    arr() {
+      const s = this.s, n = this.n;
+      const node = { t: 'arr', items: [], commas: 0 };
+      this.i++;
+      this.closers.push(']');
+      let pendingComma = false;
+      for (;;) {
+        this.ws();
+        if (this.i >= n) { this.f.add('truncated'); break; }
+        const c = s[this.i];
+        if (c === ',') { this.i++; node.commas++; pendingComma = true; continue; }
+        if (c === ']') { this.i++; if (pendingComma && node.items.length) this.f.add('trailing-comma'); break; }
+        if (c === '}') { if (this.foreignCloser(c)) break; continue; }
+        if (node.items.length && !pendingComma && node.commas) this.f.add('missing-comma');
+        const at = this.i;
+        const v = this.value(']', true, false);
+        if (!node.items.length) this.bailIfProse(v);
+        node.items.push(v);
+        if (this.i === at) this.i++;
+        pendingComma = false;
+      }
+      this.closers.pop();
+      return node;
+    }
+  }
+
+  const isContainer = x => x.t === 'obj' || x.t === 'arr';
+  const isEmpty = x => (x.t === 'obj' ? x.entries.length : x.items.length) === 0;
+
+  // Guards against "[INFO]", "{name}", "array[0]" and similar text being reported as data.
+  function accept(node) {
+    if (node.t === 'obj') return node.entries.some(e => e.k !== null);
+    if (node.t !== 'arr' || !node.items.length) return false;
+    if (node.items.some(x => isContainer(x) ? accept(x) : (x.t === 'str' && x.q))) return true;
+    return node.commas > 0 && node.items.length >= 2 && node.items.every(x => x.t === 'num' || x.t === 'bool' || x.t === 'null');
+  }
+
+  function isValidJSON(text) {
+    try { JSON.parse(text); return true; } catch (e) { return false; }
+  }
+
+  function kindOf(node, f, valid) {
+    if (valid) return 'JSON';
+    if (f.has('escaped')) return 'Escaped JSON';
+    if (node.kind === 'map') return 'Go map';
+    if (f.has('go-struct')) return 'Go struct';
+    if (f.has('eq-sep')) return 'Key=value object';
+    if (f.has('python') || f.has('single-quotes')) return node.t === 'arr' ? 'Python-style list' : 'Python-style dict';
+    if (f.has('bare-keys')) return 'JavaScript-style object';
+    return 'Loose JSON';
+  }
+
+  const FLAG_TEXT = [
+    ['escaped', 'removed backslash escaping'],
+    ['bare-keys', 'quoted bare keys'],
+    ['single-quotes', 'converted single quotes'],
+    ['bare-values', 'quoted bare values'],
+    ['empty-values', 'read empty values as ""'],
+    ['missing-comma', 'added missing commas'],
+    ['trailing-comma', 'dropped trailing commas'],
+    ['comments', 'stripped comments'],
+    ['python', 'converted True/False/None'],
+    ['go-nil', 'converted nil to null'],
+    ['loose-num', 'normalized numbers'],
+    ['positional', 'indexed values that have no key'],
+    ['stray', 'dropped stray brackets'],
+    ['mismatched', 'fixed mismatched brackets'],
+    ['truncated', 'closed unterminated brackets and strings'],
+  ];
+  function describeFlags(flags) {
+    const set = new Set(flags);
+    return FLAG_TEXT.filter(([f]) => set.has(f)).map(([, t]) => t).join(', ');
+  }
+
+  // Strings that hold JSON get .nested (whole string) or .embedded (JSON somewhere inside).
+  function enrich(node, depth) {
+    if (node.t === 'obj') { for (const e of node.entries) enrich(e.v, depth); return; }
+    if (node.t === 'arr') { for (const x of node.items) enrich(x, depth); return; }
+    if (node.t !== 'str' || depth >= MAX_STRING_DEPTH || node.v.length < 2) return;
+    const v = node.v, tr = v.trim();
+    if (tr[0] === '{' || tr[0] === '[' || tr.startsWith('map[')) {
+      const p = new Parser(tr);
+      let nn = null;
+      try { nn = p.value(null, false, false); p.ws(); } catch (e) { nn = null; }
+      if (nn && p.i >= tr.length && isContainer(nn) && (isEmpty(nn) || accept(nn))) {
+        node.nested = nn;
+        node.nestedKind = kindOf(nn, p.f, isValidJSON(tr));
+        enrich(nn, depth + 1);
+        return;
+      }
+    }
+    if (v.indexOf('{') >= 0 || v.indexOf('[') >= 0) {
+      const segs = extract(v, depth + 1);
+      if (segs.some(sg => sg.type === 'struct')) node.embedded = segs;
+    }
+  }
+
+  function extract(text, depth = 0) {
+    const segs = [], n = text.length, cand = /[{[]/g;
+    let last = 0, i = 0;
+    while (i < n) {
+      cand.lastIndex = i;
+      const m = cand.exec(text);
+      if (!m) break;
+      const j = m.index;
+      let st = j;
+      if (text[j] === '[' && j - 3 >= last && text.startsWith('map', j - 3) && !/[\w.]/.test(text[j - 4] || '')) st = j - 3;
+      const p = new Parser(text);
+      p.i = st;
+      p.candidate = true;
+      let node = null;
+      try { node = p.value(null, false, false); } catch (e) { node = null; }
+      if (node && accept(node)) {
+        if (st > last) segs.push({ type: 'text', text: text.slice(last, st), start: last, end: st });
+        const raw = text.slice(st, p.i), valid = isValidJSON(raw);
+        enrich(node, depth);
+        segs.push({ type: 'struct', node, raw, start: st, end: p.i, valid, flags: [...p.f], kind: kindOf(node, p.f, valid) });
+        last = i = p.i;
+      } else {
+        i = j + 1;
+      }
+    }
+    if (last < n) segs.push({ type: 'text', text: text.slice(last), start: last, end: n });
+    return segs;
+  }
+
+  // Serializes our tree, not JS values, so big integers and duplicate keys survive intact.
+  function toJSON(node, unwrap = true, lvl = 0) {
+    const pad = '  '.repeat(lvl + 1), end = '  '.repeat(lvl);
+    switch (node.t) {
+      case 'obj': {
+        if (!node.entries.length) return '{}';
+        if (!node.entries.some(e => e.k !== null)) return toJSON({ t: 'arr', items: node.entries.map(e => e.v) }, unwrap, lvl);
+        let pos = 0;
+        return '{\n' + node.entries.map(e =>
+          pad + JSON.stringify(e.k !== null ? e.k : '#' + pos++) + ': ' + toJSON(e.v, unwrap, lvl + 1)
+        ).join(',\n') + '\n' + end + '}';
+      }
+      case 'arr':
+        if (!node.items.length) return '[]';
+        return '[\n' + node.items.map(x => pad + toJSON(x, unwrap, lvl + 1)).join(',\n') + '\n' + end + ']';
+      case 'str': return unwrap && node.nested ? toJSON(node.nested, unwrap, lvl) : JSON.stringify(node.v);
+      case 'num': return node.json;
+      case 'bool': return node.v ? 'true' : 'false';
+      default: return 'null';
+    }
+  }
+
+  root.LogJSON = { extract, toJSON, describeFlags, Parser };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script>
+(() => {
+  'use strict';
+  const $ = sel => document.querySelector(sel);
+  const src = $('#src'), out = $('#out'), strip = $('#strip'), stats = $('#stats');
+  const unwrapEl = $('#unwrap'), toastEl = $('#toast');
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const nodeOf = new WeakMap();
+  const OPEN_DEPTH = 6;
+  let segs = [], structs = [], views = new Map(), timer = 0;
+
+  function h(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const statusOf = sg => sg.flags.includes('truncated') ? 'truncated' : sg.valid ? 'valid' : 'repaired';
+
+  function run() {
+    const text = src.value;
+    const t0 = performance.now();
+    segs = text ? LogJSON.extract(text) : [];
+    const ms = performance.now() - t0;
+    structs = segs.filter(sg => sg.type === 'struct');
+    views = new Map();
+    renderStats(text, ms);
+    renderStrip(text.length);
+    renderOutput();
+  }
+
+  function renderStats(text, ms) {
+    stats.replaceChildren();
+    if (!text) return;
+    const item = (n, label) => { const s = h('span'); s.append(h('b', null, String(n)), ' ' + label); stats.append(s); };
+    item(structs.length, structs.length === 1 ? 'structure' : 'structures');
+    const repaired = structs.filter(sg => !sg.valid).length;
+    const truncated = structs.filter(sg => sg.flags.includes('truncated')).length;
+    if (repaired) item(repaired, 'repaired');
+    if (truncated) item(truncated, 'truncated');
+    stats.append(h('span', null, `${text.length.toLocaleString()} characters`));
+    stats.append(h('span', null, `parsed in ${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`));
+    for (const b of ['#expandAll', '#collapseAll', '#copyAll']) $(b).disabled = !structs.length;
+  }
+
+  function renderStrip(n) {
+    strip.replaceChildren();
+    structs.forEach((sg, i) => {
+      const k = i + 1;
+      const b = h('button', 'band ' + statusOf(sg), String(k));
+      b.dataset.k = k;
+      b.style.left = `calc(${(sg.start / n) * 100}% - ${(sg.start / n) * 1.5}rem)`;
+      b.style.width = `${((sg.end - sg.start) / n) * 100}%`;
+      b.title = `${k}. ${sg.kind}, characters ${sg.start.toLocaleString()}–${sg.end.toLocaleString()}`;
+      b.setAttribute('aria-label', `Go to structure ${k}: ${sg.kind}`);
+      b.addEventListener('click', () => focusStruct(k));
+      strip.append(b);
+    });
+  }
+
+  function renderOutput() {
+    out.replaceChildren();
+    if (!src.value.trim()) {
+      out.append(emptyState('Paste text to pull the JSON out of it',
+        'Anything that looks like JSON is shown as a tree: strict or broken, escaped, cut off, Go structs and maps, Python and JavaScript literals, and JSON tucked inside string values.', true));
+      for (const b of ['#expandAll', '#collapseAll', '#copyAll']) $(b).disabled = true;
+      return;
+    }
+    if (!structs.length) {
+      out.append(emptyState('No JSON found in this text',
+        'The extractor looks for { … }, [ … ] and Go map[ … ] blocks that contain at least one key or a quoted value.', false));
+      return;
+    }
+    const flow = h('div', 'flow');
+    let k = 0;
+    for (const sg of segs) {
+      if (sg.type === 'text') { if (sg.text.trim()) flow.append(textBlock(sg.text)); }
+      else flow.append(structCard(sg, ++k));
+    }
+    out.append(flow);
+    for (const w of flow.querySelectorAll('.text-wrap')) clampIfLong(w);
+  }
+
+  function emptyState(title, body, withExample) {
+    const d = h('div', 'empty');
+    d.append(h('p', 'empty-title', title), h('p', null, body));
+    if (withExample) {
+      const b = h('button', 'btn', 'Load example');
+      b.addEventListener('click', loadExample);
+      d.append(b);
+    }
+    return d;
+  }
+
+  function textBlock(text) {
+    const w = h('div', 'text-wrap');
+    w.append(h('pre', 'seg-text', text));
+    return w;
+  }
+
+  function clampIfLong(w) {
+    const pre = w.firstChild;
+    w.classList.add('clamped');
+    if (pre.scrollHeight <= pre.clientHeight + 2) { w.classList.remove('clamped'); return; }
+    const b = h('button', 'more', 'Show all');
+    b.addEventListener('click', () => {
+      const open = w.classList.toggle('clamped');
+      b.textContent = open ? 'Show all' : 'Show less';
+    });
+    w.append(b);
+  }
+
+  function structCard(sg, k) {
+    const art = h('article', 'struct');
+    art.id = 'struct-' + k;
+    art.dataset.status = statusOf(sg);
+
+    const head = h('header', 'struct-head');
+    head.append(h('span', 'idx', String(k)), h('h2', null, sg.kind));
+    if (!sg.valid) head.append(h('span', 'badge fix', 'Repaired'));
+    if (sg.flags.includes('truncated')) head.append(h('span', 'badge cut', 'Truncated'));
+    head.append(h('span', 'grow'));
+
+    const ctl = h('div', 'seg-ctl');
+    ctl.setAttribute('role', 'group');
+    ctl.setAttribute('aria-label', 'View as');
+    const bTree = h('button', null, 'Tree'), bJson = h('button', null, 'JSON');
+    ctl.append(bTree, bJson);
+    const bSel = h('button', 'btn small', 'Select in input');
+    const bCopy = h('button', 'btn small', 'Copy JSON');
+    head.append(ctl, bSel, bCopy);
+    art.append(head);
+
+    const notes = LogJSON.describeFlags(sg.flags);
+    if (!sg.valid && notes) art.append(h('p', 'notes', 'Repairs: ' + notes));
+
+    const body = h('div', 'struct-body');
+    art.append(body);
+    const show = v => {
+      views.set(k, v);
+      bTree.setAttribute('aria-pressed', String(v === 'tree'));
+      bJson.setAttribute('aria-pressed', String(v === 'json'));
+      body.replaceChildren(v === 'tree' ? treeOf(sg.node) : jsonView(sg.node));
+    };
+    show(views.get(k) || 'tree');
+    bTree.addEventListener('click', () => show('tree'));
+    bJson.addEventListener('click', () => show('json'));
+    bSel.addEventListener('click', () => selectInInput(sg.start, sg.end));
+    bCopy.addEventListener('click', () => copy(LogJSON.toJSON(sg.node, unwrapEl.checked), 'Copied JSON'));
+    art.addEventListener('mouseenter', () => markBand(k, true));
+    art.addEventListener('mouseleave', () => markBand(k, false));
+    return art;
+  }
+
+  // ---- tree view ----
+  function treeOf(node) {
+    const t = h('div', 'tree');
+    t.append(renderNode(node, null, null, 0));
+    return t;
+  }
+
+  function appendLabel(el, label, kind) {
+    if (label == null) return;
+    el.append(h('span', 'k ' + kind, String(label)), h('span', 'colon', ': '));
+  }
+
+  function copyButton(node) {
+    const b = h('button', 'copy-node', 'Copy');
+    b.setAttribute('aria-label', 'Copy this value');
+    nodeOf.set(b, node);
+    return b;
+  }
+
+  function childrenOf(c) {
+    if (c.t === 'arr') return c.items.map((v, i) => [i, 'index', v]);
+    const keyed = c.entries.some(e => e.k !== null);
+    let pos = 0;
+    return c.entries.map((e, i) => keyed
+      ? (e.k === null ? ['#' + pos++, 'pos', e.v] : [e.k, 'key', e.v])
+      : [i, 'index', e.v]);
+  }
+
+  function renderNode(node, label, kind, depth) {
+    const unwrap = unwrapEl.checked;
+    if (node.t === 'str' && unwrap && node.nested) return renderContainer(node.nested, label, kind, depth, node.nestedKind);
+    if (node.t === 'obj' || node.t === 'arr') return renderContainer(node, label, kind, depth, null);
+    if (node.t === 'str' && node.embedded) return renderEmbedded(node, label, kind, depth);
+    const row = h('div', 'row');
+    appendLabel(row, label, kind);
+    row.append(scalarEl(node), copyButton(node));
+    return row;
+  }
+
+  function scalarEl(node) {
+    switch (node.t) {
+      case 'str': return h('span', 'v str' + (node.v === '' ? ' empty' : ''), `"${node.v}"`);
+      case 'num': return h('span', 'v num', node.raw);
+      case 'bool': return h('span', 'v bool', node.raw);
+      default: return h('span', 'v null', node.raw || 'null');
+    }
+  }
+
+  function renderContainer(c, label, kind, depth, fromString) {
+    const kids = childrenOf(c);
+    const isArr = c.t === 'arr' || (kids.length && kids[0][1] === 'index');
+    const [open, close] = isArr ? ['[', ']'] : ['{', '}'];
+    if (!kids.length) {
+      const row = h('div', 'row');
+      appendLabel(row, label, kind);
+      row.append(h('span', 'brace', open + close));
+      if (fromString) row.append(h('span', 'tag', 'from string'));
+      return row;
+    }
+    const det = h('details', 'node');
+    det.open = depth < OPEN_DEPTH && kids.length <= 300;
+    const sum = h('summary');
+    appendLabel(sum, label, kind);
+    sum.append(h('span', 'brace', open));
+    sum.append(h('span', 'count', plural(kids.length, isArr ? 'item' : 'key', isArr ? 'items' : 'keys')));
+    if (fromString) {
+      const tag = h('span', 'tag', 'from string');
+      tag.title = `${fromString} decoded from a string value`;
+      sum.append(tag);
+    }
+    sum.append(h('span', 'preview', previewOf(kids, isArr) + ' ' + close), copyButton(c));
+    det.append(sum);
+    const body = h('div', 'children');
+    for (const [l, kd, v] of kids) body.append(renderNode(v, l, kd, depth + 1));
+    det.append(body);
+    return det;
+  }
+
+  function renderEmbedded(node, label, kind, depth) {
+    const det = h('details', 'node');
+    det.open = depth < OPEN_DEPTH;
+    const sum = h('summary');
+    appendLabel(sum, label, kind);
+    sum.append(h('span', 'v str', '"…"'), h('span', 'tag', 'text with JSON'));
+    sum.append(h('span', 'preview', short(node.v, 90)), copyButton(node));
+    det.append(sum);
+    const body = h('div', 'children');
+    for (const sg of node.embedded) {
+      if (sg.type === 'text') { if (sg.text.trim()) body.append(h('div', 'etext', sg.text)); }
+      else body.append(renderNode(sg.node, null, null, depth + 1));
+    }
+    det.append(body);
+    return det;
+  }
+
+  function short(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+  function previewOf(kids, isArr) {
+    let s = '';
+    for (const [l, , v] of kids) {
+      const val = v.t === 'str' ? (unwrapEl.checked && v.nested ? '{…}' : `"${short(v.v, 24)}"`)
+        : v.t === 'obj' ? '{…}' : v.t === 'arr' ? '[…]' : (v.raw || 'null');
+      const part = (isArr ? '' : l + ': ') + val;
+      if (s.length + part.length > 80) return s + (s ? ', …' : '…');
+      s += (s ? ', ' : '') + part;
+    }
+    return s;
+  }
+
+  // ---- JSON view ----
+  function jsonView(node) {
+    const pre = h('pre', 'json');
+    const text = LogJSON.toJSON(node, unwrapEl.checked);
+    const re = /("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b/g;
+    const frag = document.createDocumentFragment();
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      if (m[1]) { frag.append(h('span', m[2] ? 'k' : 's', m[1])); if (m[2]) frag.append(m[2]); }
+      else if (m[3]) frag.append(h('span', 'n', m[3]));
+      else frag.append(h('span', 'l', m[4]));
+      last = re.lastIndex;
+    }
+    frag.append(text.slice(last));
+    pre.append(frag);
+    return pre;
+  }
+
+  // ---- interactions ----
+  function markBand(k, on) {
+    const b = strip.querySelector(`[data-k="${k}"]`);
+    if (b) b.classList.toggle('hot', on);
+  }
+
+  function focusStruct(k) {
+    const el = document.getElementById('struct-' + k);
+    if (!el) return;
+    el.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+  }
+
+  function selectInInput(start, end) {
+    const cs = getComputedStyle(src);
+    const mirror = document.createElement('div');
+    for (const p of ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'paddingLeft', 'paddingRight', 'paddingTop', 'tabSize']) mirror.style[p] = cs[p];
+    Object.assign(mirror.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', width: src.clientWidth + 'px' });
+    mirror.textContent = src.value.slice(0, start);
+    document.body.append(mirror);
+    const y = mirror.scrollHeight;
+    mirror.remove();
+    src.focus({ preventScroll: true });
+    src.setSelectionRange(start, end);
+    src.scrollTop = Math.max(0, y - src.clientHeight / 3);
+  }
+
+  async function copy(text, msg) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      const t = h('textarea');
+      t.value = text;
+      document.body.append(t);
+      t.select();
+      document.execCommand('copy');
+      t.remove();
+    }
+    toast(msg);
+  }
+
+  let toastTimer = 0;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1400);
+  }
+
+  function loadExample() {
+    src.value = $('#example-text').textContent.trim();
+    run();
+  }
+
+  out.addEventListener('click', e => {
+    const b = e.target.closest('.copy-node');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const node = nodeOf.get(b);
+    const unwrap = unwrapEl.checked;
+    let text;
+    if (node.t === 'str' && !(unwrap && node.nested)) text = node.v;
+    else if (node.t === 'num') text = node.raw;
+    else if (node.t === 'bool' || node.t === 'null') text = LogJSON.toJSON(node);
+    else text = LogJSON.toJSON(node, unwrap);
+    copy(text, 'Copied value');
+  });
+
+  src.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(run, src.value.length > 200000 ? 300 : 90);
+  });
+  src.addEventListener('dragover', e => {
+    if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); src.classList.add('dropping'); }
+  });
+  src.addEventListener('dragleave', () => src.classList.remove('dropping'));
+  src.addEventListener('drop', async e => {
+    src.classList.remove('dropping');
+    const f = e.dataTransfer.files[0];
+    if (!f) return;
+    e.preventDefault();
+    src.value = await f.text();
+    run();
+  });
+
+  unwrapEl.addEventListener('change', renderOutput);
+  $('#example').addEventListener('click', loadExample);
+  $('#clear').addEventListener('click', () => { src.value = ''; run(); src.focus(); });
+  $('#expandAll').addEventListener('click', () => out.querySelectorAll('details').forEach(d => { d.open = true; }));
+  $('#collapseAll').addEventListener('click', () => out.querySelectorAll('details').forEach(d => { d.open = false; }));
+  $('#copyAll').addEventListener('click', () => {
+    if (!structs.length) return;
+    const node = structs.length === 1 ? structs[0].node : { t: 'arr', items: structs.map(sg => sg.node) };
+    copy(LogJSON.toJSON(node, unwrapEl.checked), structs.length === 1 ? 'Copied JSON' : `Copied ${structs.length} structures as a JSON array`);
+  });
+
+  run();
+})();
+</script>
+</body>
+</html>
